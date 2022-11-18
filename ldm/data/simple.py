@@ -11,6 +11,10 @@ from einops import rearrange
 from ldm.util import instantiate_from_config
 from datasets import load_dataset
 
+def make_morphogen_data(paths, caption_files=None, **kwargs):
+    ds = make_multi_folder_data(paths, caption_files, **kwargs)
+    return TransformDataset(ds)
+
 def make_multi_folder_data(paths, caption_files=None, **kwargs):
     """Make a concat dataset from multiple folders
     Don't suport captions yet
@@ -102,7 +106,7 @@ class FolderData(Dataset):
         if self.return_paths:
             data["path"] = str(filename)
 
-        im = Image.open(filename)
+        im = Image.open(filename).convert("RGB")
         im = self.process_im(im)
         data["image"] = im
 
@@ -119,6 +123,39 @@ class FolderData(Dataset):
     def process_im(self, im):
         im = im.convert("RGB")
         return self.tform(im)
+import random
+
+class TransformDataset():
+    def __init__(self, ds):
+        self.ds = ds
+        self.extra_label = "morphgen"
+        self.transforms = {
+            "align": transforms.Resize(768),
+            "centerzoom": transforms.CenterCrop(768),
+            "randzoom": transforms.RandomCrop(768),
+        }
+
+
+    def __getitem__(self, index):
+        data = self.ds[index]
+
+        im = data['image']
+        im = im.permute(2,0,1)
+        # In case data is smaller than expected
+        im = transforms.Resize(1024)(im)
+
+        tform_name = random.choice(list(self.transforms.keys()))
+        im = self.transforms[tform_name](im)
+
+        im = im.permute(1,2,0)
+
+        data['image'] = im
+        data['txt'] = data['txt'] + f" {self.extra_label} {tform_name}"
+
+        return data
+
+    def __len__(self):
+        return len(self.ds)
 
 def hf_dataset(
     name,

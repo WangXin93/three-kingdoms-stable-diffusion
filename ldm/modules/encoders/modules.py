@@ -21,6 +21,33 @@ class IdentityEncoder(AbstractEncoder):
     def encode(self, x):
         return x
 
+class FaceClipEncoder(AbstractEncoder):
+    def __init__(self, augment=True):
+        super().__init__()
+        self.encoder = FrozenCLIPImageEmbedder()
+        self.augment = True
+
+    def forward(self, img):
+        encodings = []
+        with torch.no_grad():
+            face = img[:,:,184:452,122:396]
+            if self.augment:
+                face = K.RandomHorizontalFlip()(face)
+            other = img.clone()
+            other[:,:,184:452,122:396] *= 0
+            encodings = [
+                self.encoder.encode(face),
+                self.encoder.encode(other),
+            ]
+
+        return torch.cat(encodings, dim=1)
+
+    def encode(self, img):
+        if isinstance(img, list):
+            # Uncondition
+            return torch.zeros((1, 2, 768), device=self.encoder.model.visual.conv1.weight.device)
+
+        return self(img)
 
 class ClassEmbedder(nn.Module):
     def __init__(self, embed_dim, n_classes=1000, key='class'):
@@ -160,10 +187,10 @@ class FrozenFaceEncoder(AbstractEncoder):
             self.augment = K.AugmentationSequential(
                 K.RandomHorizontalFlip(p=0.5),
                 K.RandomEqualize(p=p),
-                K.RandomPlanckianJitter(p=p),
-                K.RandomPlasmaBrightness(p=p),
-                K.RandomPlasmaContrast(p=p),
-                K.ColorJiggle(0.02, 0.2, 0.2, p=p),
+                # K.RandomPlanckianJitter(p=p),
+                # K.RandomPlasmaBrightness(p=p),
+                # K.RandomPlasmaContrast(p=p),
+                # K.ColorJiggle(0.02, 0.2, 0.2, p=p),
             )
         else:
             self.augment = False
