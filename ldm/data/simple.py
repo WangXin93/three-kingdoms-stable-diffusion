@@ -11,6 +11,8 @@ from einops import rearrange
 from ldm.util import instantiate_from_config
 from datasets import load_dataset
 import copy
+import csv
+import cv2
 
 # Some hacky things to make experimentation easier
 def make_transform_multi_folder_data(paths, caption_files=None, **kwargs):
@@ -24,6 +26,58 @@ def make_nfp_data(base_path):
     tforms = [transforms.Resize(512), transforms.CenterCrop(512)]
     datasets = [NfpDataset(x, image_transforms=copy.copy(tforms), default_caption="A view from a train window") for x in dirs]
     return torch.utils.data.ConcatDataset(datasets)
+
+
+class VideoDataset(Dataset):
+    def __init__(self, root_dir, image_transforms, caption_file, offset=8):
+        self.root_dir = Path(root_dir)
+        self.caption_file = caption_file
+        ext = "mp4"
+        self.paths = sorted(list(self.root_dir.rglob(f"*.{ext}")))
+        self.offset = offset
+
+        if isinstance(image_transforms, ListConfig):
+            image_transforms = [instantiate_from_config(tt) for tt in image_transforms]
+        image_transforms.extend([transforms.ToTensor(),
+                                 transforms.Lambda(lambda x: rearrange(x * 2. - 1., 'c h w -> h w c'))])
+        image_transforms = transforms.Compose(image_transforms)
+        self.tform = image_transforms
+        with open(self.caption_file) as f:
+            reader = csv.reader(f)
+            rows = [row for row in reader]
+        self.captions = dict(rows)
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index):
+        try:
+            return self._load_sample(index)
+        except Exception:
+            # Not really good enough but...
+            print("uh oh")
+            return self._load_sample(random.randint(0, len(self)))
+
+    def _load_sample(self, index):
+        filename = self.paths[index]
+        min_frame = self.offset + 1
+        vid = cv2.VideoCapture(str(filename))
+        max_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
+        curr_frame_n = random.randint(min_frame, max_frames)
+        prev_frame_n = curr_frame_n - self.offset
+        vid.set(cv2.CAP_PROP_POS_FRAMES,curr_frame_n)
+        _, curr_frame = vid.read()
+        vid.set(cv2.CAP_PROP_POS_FRAMES,prev_frame_n)
+        _, prev_frame = vid.read()
+        vid.release()
+        caption = self.captions[filename.name]
+        data = {
+            "image": self.tform(Image.fromarray(curr_frame[...,::-1])),
+            "prev": self.tform(Image.fromarray(prev_frame[...,::-1])),
+            "txt": caption
+        }
+        return data
+
 # end hacky things
 
 def make_multi_folder_data(paths, caption_files=None, **kwargs):
