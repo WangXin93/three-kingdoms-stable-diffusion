@@ -10,10 +10,21 @@ from torchvision import transforms
 from einops import rearrange
 from ldm.util import instantiate_from_config
 from datasets import load_dataset
+import copy
 
-def make_morphogen_data(paths, caption_files=None, **kwargs):
+# Some hacky things to make experimentation easier
+def make_transform_multi_folder_data(paths, caption_files=None, **kwargs):
     ds = make_multi_folder_data(paths, caption_files, **kwargs)
     return TransformDataset(ds)
+
+def make_nfp_data(base_path):
+    dirs = list(Path(base_path).glob("*/"))
+    print(f"Found {len(dirs)} folders")
+    print(dirs)
+    tforms = [transforms.Resize(512), transforms.CenterCrop(512)]
+    datasets = [NfpDataset(x, image_transforms=copy.copy(tforms), default_caption="A view from a train window") for x in dirs]
+    return torch.utils.data.ConcatDataset(datasets)
+# end hacky things
 
 def make_multi_folder_data(paths, caption_files=None, **kwargs):
     """Make a concat dataset from multiple folders
@@ -35,6 +46,46 @@ def make_multi_folder_data(paths, caption_files=None, **kwargs):
     else:
         datasets = [FolderData(p, **kwargs) for p in paths]
     return torch.utils.data.ConcatDataset(datasets)
+
+
+
+class NfpDataset(Dataset):
+    def __init__(self,
+        root_dir,
+        image_transforms=[],
+        ext="jpg",
+        default_caption="",
+        ) -> None:
+        """assume sequential frames and a deterministic transform"""
+
+        self.root_dir = Path(root_dir)
+        self.default_caption = default_caption
+
+        self.paths = sorted(list(self.root_dir.rglob(f"*.{ext}")))
+        if isinstance(image_transforms, ListConfig):
+            image_transforms = [instantiate_from_config(tt) for tt in image_transforms]
+        image_transforms.extend([transforms.ToTensor(),
+                                 transforms.Lambda(lambda x: rearrange(x * 2. - 1., 'c h w -> h w c'))])
+        image_transforms = transforms.Compose(image_transforms)
+        self.tform = image_transforms
+
+    def __len__(self):
+        return len(self.paths) - 1
+
+
+    def __getitem__(self, index):
+        prev = self.paths[index]
+        curr = self.paths[index+1]
+        data = {}
+        data["image"] = self._load_im(curr)
+        data["prev"] = self._load_im(prev)
+        data["txt"] = self.default_caption
+        return data
+
+    def _load_im(self, filename):
+        im = Image.open(filename).convert("RGB")
+        return self.tform(im)
+
 
 class FolderData(Dataset):
     def __init__(self,
