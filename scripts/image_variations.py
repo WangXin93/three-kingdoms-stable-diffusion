@@ -1,6 +1,7 @@
 from io import BytesIO
 import os
 from contextlib import nullcontext
+import glob
 
 import fire
 import numpy as np
@@ -11,6 +12,7 @@ from PIL import Image
 from torch import autocast
 from torchvision import transforms
 import requests
+import pandas as pd
 
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
@@ -45,8 +47,8 @@ def load_im(im_path):
     else:
         im = Image.open(im_path).convert("RGB")
     tforms = transforms.Compose([
-        transforms.Resize(224),
-        transforms.CenterCrop((224, 224)),
+        # transforms.Resize(224),
+        # transforms.CenterCrop((224, 224)),
         transforms.ToTensor(),
     ])
     inp = tforms(im).unsqueeze(0)
@@ -90,12 +92,13 @@ def main(
     precision="fp32",
     plms=True,
     ddim_steps=50,
-    ddim_eta=1.0,
+    ddim_eta=0.0,
     device_idx=0,
+    save=True,
+    eval=True,
     ):
 
     device = f"cuda:{device_idx}"
-    input_im = load_im(im_path).to(device)
     config = OmegaConf.load(config)
     model = load_model_from_config(config, ckpt, device=device)
 
@@ -111,12 +114,36 @@ def main(
     os.makedirs(sample_path, exist_ok=True)
     base_count = len(os.listdir(sample_path))
 
-    x_samples_ddim = sample_model(input_im, model, sampler, precision, h, w, ddim_steps, n_samples, scale, ddim_eta)
-    for x_sample in x_samples_ddim:
-        x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-        Image.fromarray(x_sample.astype(np.uint8)).save(
-            os.path.join(sample_path, f"{base_count:05}.png"))
-        base_count += 1
+    if isinstance(im_path, str):
+        im_paths = glob.glob(im_path)
+    im_paths = sorted(im_paths)
+
+    all_similarities = []
+
+    for im in im_paths:
+        input_im = load_im(im).to(device)
+
+        x_samples_ddim = sample_model(input_im, model, sampler, precision, h, w, ddim_steps, n_samples, scale, ddim_eta)
+        if save:
+            for x_sample in x_samples_ddim:
+                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                filename = os.path.join(sample_path, f"{base_count:05}.png")
+                Image.fromarray(x_sample.astype(np.uint8)).save(filename)
+                base_count += 1
+
+        if eval:
+            generated_embed = model.get_learned_conditioning(x_samples_ddim).squeeze(1)
+            prompt_embed = model.get_learned_conditioning(input_im).squeeze(1)
+
+            generated_embed /= generated_embed.norm(dim=-1, keepdim=True)
+            prompt_embed /= prompt_embed.norm(dim=-1, keepdim=True)
+            similarity = prompt_embed @ generated_embed.T
+            mean_sim = similarity.mean()
+            all_similarities.append(mean_sim.unsqueeze(0))
+
+    df = pd.DataFrame(zip(im_paths, [x.item() for x in all_similarities]), columns=["filename", "similarity"])
+    df.to_csv(os.path.join(sample_path, "eval.csv"))
+    print(torch.cat(all_similarities).mean())
 
 if __name__ == "__main__":
     fire.Fire(main)

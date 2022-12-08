@@ -49,6 +49,36 @@ class FaceClipEncoder(AbstractEncoder):
 
         return self(img)
 
+class FaceIdClipEncoder(AbstractEncoder):
+    def __init__(self):
+        super().__init__()
+        self.encoder = FrozenCLIPImageEmbedder()
+        for p in self.encoder.parameters():
+            p.requires_grad = False
+        self.id = FrozenFaceEncoder("/home/jpinkney/code/stable-diffusion/model_ir_se50.pth", augment=True)
+
+    def forward(self, img):
+        encodings = []
+        with torch.no_grad():
+            face = kornia.geometry.resize(img, (256, 256),
+                            interpolation='bilinear', align_corners=True)
+
+            other = img.clone()
+            other[:,:,184:452,122:396] *= 0
+            encodings = [
+                self.id.encode(face),
+                self.encoder.encode(other),
+            ]
+
+        return torch.cat(encodings, dim=1)
+
+    def encode(self, img):
+        if isinstance(img, list):
+            # Uncondition
+            return torch.zeros((1, 2, 768), device=self.encoder.model.visual.conv1.weight.device)
+
+        return self(img)
+
 class ClassEmbedder(nn.Module):
     def __init__(self, embed_dim, n_classes=1000, key='class'):
         super().__init__()
