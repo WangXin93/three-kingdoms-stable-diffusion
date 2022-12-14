@@ -29,9 +29,10 @@ def make_nfp_data(base_path):
 
 
 class VideoDataset(Dataset):
-    def __init__(self, root_dir, image_transforms, caption_file, offset=8):
+    def __init__(self, root_dir, image_transforms, caption_file, offset=8, n=2):
         self.root_dir = Path(root_dir)
         self.caption_file = caption_file
+        self.n = n
         ext = "mp4"
         self.paths = sorted(list(self.root_dir.rglob(f"*.{ext}")))
         self.offset = offset
@@ -51,29 +52,36 @@ class VideoDataset(Dataset):
         return len(self.paths)
 
     def __getitem__(self, index):
-        try:
-            return self._load_sample(index)
-        except Exception:
-            # Not really good enough but...
-            print("uh oh")
-            return self._load_sample(random.randint(0, len(self)))
+        for i in range(10):
+            try:
+                return self._load_sample(index)
+            except Exception:
+                # Not really good enough but...
+                print("uh oh")
 
     def _load_sample(self, index):
+        n = self.n
         filename = self.paths[index]
-        min_frame = self.offset + 1
+        min_frame = 2*self.offset + 2
         vid = cv2.VideoCapture(str(filename))
         max_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
         curr_frame_n = random.randint(min_frame, max_frames)
-        prev_frame_n = curr_frame_n - self.offset
         vid.set(cv2.CAP_PROP_POS_FRAMES,curr_frame_n)
         _, curr_frame = vid.read()
-        vid.set(cv2.CAP_PROP_POS_FRAMES,prev_frame_n)
-        _, prev_frame = vid.read()
+
+        prev_frames = []
+        for i in range(n):
+            prev_frame_n = curr_frame_n - (i+1)*self.offset
+            vid.set(cv2.CAP_PROP_POS_FRAMES,prev_frame_n)
+            _, prev_frame = vid.read()
+            prev_frame = self.tform(Image.fromarray(prev_frame[...,::-1]))
+            prev_frames.append(prev_frame)
+
         vid.release()
         caption = self.captions[filename.name]
         data = {
             "image": self.tform(Image.fromarray(curr_frame[...,::-1])),
-            "prev": self.tform(Image.fromarray(prev_frame[...,::-1])),
+            "prev": torch.cat(prev_frames, dim=-1),
             "txt": caption
         }
         return data
