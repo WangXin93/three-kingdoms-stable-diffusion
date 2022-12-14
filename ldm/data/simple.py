@@ -182,7 +182,7 @@ class FolderData(Dataset):
         # Only used if there is no caption file
         self.paths = []
         for e in ext:
-            self.paths.extend(list(self.root_dir.rglob(f"*.{e}")))
+            self.paths.extend(sorted(list(self.root_dir.rglob(f"*.{e}"))))
         if isinstance(image_transforms, ListConfig):
             image_transforms = [instantiate_from_config(tt) for tt in image_transforms]
         image_transforms.extend([transforms.ToTensor(),
@@ -231,9 +231,9 @@ class FolderData(Dataset):
 import random
 
 class TransformDataset():
-    def __init__(self, ds):
+    def __init__(self, ds, extra_label="sksbspic"):
         self.ds = ds
-        self.extra_label = "morphgen"
+        self.extra_label = extra_label
         self.transforms = {
             "align": transforms.Resize(768),
             "centerzoom": transforms.CenterCrop(768),
