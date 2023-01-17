@@ -386,6 +386,7 @@ class FrozenCLIPImageMutliEmbedder(AbstractEncoder):
             jit=False,
             device='cpu',
             antialias=True,
+            max_crops=5,
         ):
         super().__init__()
         self.model, _ = clip.load(name=model, device=device, jit=jit)
@@ -394,16 +395,15 @@ class FrozenCLIPImageMutliEmbedder(AbstractEncoder):
         self.antialias = antialias
         self.register_buffer('mean', torch.Tensor([0.48145466, 0.4578275, 0.40821073]), persistent=False)
         self.register_buffer('std', torch.Tensor([0.26862954, 0.26130258, 0.27577711]), persistent=False)
-        self.max_crops = 4
+        self.max_crops = max_crops
 
     def preprocess(self, x):
 
         # Expects inputs in the range -1, 1
-        randcrop = transforms.RandomCrop(224)
-        resize = transforms.Resize(224)
-        n = random.randint(0, self.max_crops)
-        crops = [randcrop(x) for _ in range(n)]
-        patches = [resize(x)]
+        randcrop = transforms.RandomResizedCrop(224, scale=(0.085, 1.0), ratio=(1,1))
+        max_crops = self.max_crops
+        patches = []
+        crops = [randcrop(x) for _ in range(max_crops)]
         patches.extend(crops)
         x = torch.cat(patches, dim=0)
         x = (x + 1.) / 2.
@@ -416,13 +416,15 @@ class FrozenCLIPImageMutliEmbedder(AbstractEncoder):
         if isinstance(x, list):
             # [""] denotes condition dropout for ucg
             device = self.model.visual.conv1.weight.device
-            return torch.zeros(1, self.max_crops + 1, 768, device=device)
+            return torch.zeros(1, self.max_crops, 768, device=device)
         batch_tokens = []
         for im in x:
             patches = self.preprocess(im.unsqueeze(0))
             tokens = self.model.encode_image(patches).float()
-            pad_amount = self.max_crops + 1 - tokens.shape[0]
-            batch_tokens.append(torch.nn.functional.pad(tokens, [0,0,0,pad_amount]).unsqueeze(0))
+            for t in tokens:
+                if random.random() < 0.1:
+                    t *= 0
+            batch_tokens.append(tokens.unsqueeze(0))
 
         return torch.cat(batch_tokens, dim=0)
 
