@@ -22,19 +22,28 @@ class IdentityEncoder(AbstractEncoder):
         return x
 
 class FaceClipEncoder(AbstractEncoder):
-    def __init__(self, augment=True):
+    def __init__(self, augment=True, retreival_key=None):
         super().__init__()
         self.encoder = FrozenCLIPImageEmbedder()
-        self.augment = True
+        self.augment = augment
+        self.retreival_key = retreival_key
 
     def forward(self, img):
         encodings = []
         with torch.no_grad():
-            face = img[:,:,184:452,122:396]
+            x_offset = 125
+            if self.retreival_key:
+                # Assumes retrieved image are packed into the second half of channels
+                face = img[:,3:,190:440,x_offset:(512-x_offset)]
+                other = img[:,:3,...].clone()
+            else:
+                face = img[:,:,190:440,x_offset:(512-x_offset)]
+                other = img.clone()
+
             if self.augment:
                 face = K.RandomHorizontalFlip()(face)
-            other = img.clone()
-            other[:,:,184:452,122:396] *= 0
+
+            other[:,:,190:440,x_offset:(512-x_offset)] *= 0
             encodings = [
                 self.encoder.encode(face),
                 self.encoder.encode(other),

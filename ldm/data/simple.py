@@ -88,6 +88,16 @@ class VideoDataset(Dataset):
 
 # end hacky things
 
+
+def make_tranforms(image_transforms):
+    if isinstance(image_transforms, ListConfig):
+        image_transforms = [instantiate_from_config(tt) for tt in image_transforms]
+    image_transforms.extend([transforms.ToTensor(),
+                                transforms.Lambda(lambda x: rearrange(x * 2. - 1., 'c h w -> h w c'))])
+    image_transforms = transforms.Compose(image_transforms)
+    return image_transforms
+
+
 def make_multi_folder_data(paths, caption_files=None, **kwargs):
     """Make a concat dataset from multiple folders
     Don't suport captions yet
@@ -124,12 +134,7 @@ class NfpDataset(Dataset):
         self.default_caption = default_caption
 
         self.paths = sorted(list(self.root_dir.rglob(f"*.{ext}")))
-        if isinstance(image_transforms, ListConfig):
-            image_transforms = [instantiate_from_config(tt) for tt in image_transforms]
-        image_transforms.extend([transforms.ToTensor(),
-                                 transforms.Lambda(lambda x: rearrange(x * 2. - 1., 'c h w -> h w c'))])
-        image_transforms = transforms.Compose(image_transforms)
-        self.tform = image_transforms
+        self.tform = make_tranforms(image_transforms)
 
     def __len__(self):
         return len(self.paths) - 1
@@ -191,13 +196,7 @@ class FolderData(Dataset):
         self.paths = []
         for e in ext:
             self.paths.extend(sorted(list(self.root_dir.rglob(f"*.{e}"))))
-        if isinstance(image_transforms, ListConfig):
-            image_transforms = [instantiate_from_config(tt) for tt in image_transforms]
-        image_transforms.extend([transforms.ToTensor(),
-                                 transforms.Lambda(lambda x: rearrange(x * 2. - 1., 'c h w -> h w c'))])
-        image_transforms = transforms.Compose(image_transforms)
-        self.tform = image_transforms
-
+        self.tform = make_tranforms(image_transforms)
 
     def __len__(self):
         if self.captions is not None:
@@ -282,10 +281,7 @@ def hf_dataset(
     """Make huggingface dataset with appropriate list of transforms applied
     """
     ds = load_dataset(name, split=split)
-    image_transforms = [instantiate_from_config(tt) for tt in image_transforms]
-    image_transforms.extend([transforms.ToTensor(),
-                                transforms.Lambda(lambda x: rearrange(x * 2. - 1., 'c h w -> h w c'))])
-    tform = transforms.Compose(image_transforms)
+    tform = make_tranforms(image_transforms)
 
     assert image_column in ds.column_names, f"Didn't find column {image_column} in {ds.column_names}"
     assert text_column in ds.column_names, f"Didn't find column {text_column} in {ds.column_names}"
@@ -328,3 +324,28 @@ class TextOnly(Dataset):
         with open(filename, 'rt') as f:
             captions = f.readlines()
         return [x.strip('\n') for x in captions]
+
+
+
+import random
+import json
+class IdRetreivalDataset(FolderData):
+    def __init__(self, ret_file, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        with open(ret_file, "rt") as f:
+            self.ret = json.load(f)
+
+    def __getitem__(self, index):
+        data = super().__getitem__(index)
+        key = self.paths[index].name
+        matches = self.ret[key]
+        if len(matches) > 0:
+            retreived = random.choice(matches)
+        else:
+            retreived = key
+        filename = self.root_dir/retreived
+        im = Image.open(filename).convert("RGB")
+        im = self.process_im(im)
+        # data["match"] = im
+        data["match"] = torch.cat((data["image"], im), dim=-1)
+        return data
