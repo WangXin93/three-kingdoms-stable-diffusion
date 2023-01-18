@@ -1,13 +1,35 @@
 # Experiments with Stable Diffusion
 
-This repository extends and adds to the [original training repo](https://github.com/pesser/stable-diffusion) for Stable Diffusion.
+This repository extends and adds to the [original training repo](https://github.com/pesser/stable-diffusion) for Stable Diffusion. Be careful using this repo, it's by personal Stable Diffusion playground and backwards compatibility breaking changes might happen anytime. So use at your own risk. I recommend sticking to a particular git commit if you are depending on some functionality.
 
 Currently it adds:
 
+- [Image Mixer](#image-mixer)
+- [Super Resolution](#super-resolution)
 - [Imagic](notebooks/imagic.ipynb)
 - [Fine tuning](#fine-tuning)
 - [Image variations](#image-variations)
 - [Conversion to Huggingface Diffusers](scripts/convert_sd_to_diffusers.py)
+
+## Image Mixer
+
+Multi CLIP image embedding model coming soon...
+
+## Super Resolution
+
+I fine tuned a version of Stable Diffusion 1.4 for the task of super-resolution, you can find the [trained model on huggingface hub](https://huggingface.co/lambdalabs/stable-diffusion-super-res) and can run a gradio demo as follows:
+
+```bash
+git clone https://github.com/justinpinkney/stable-diffusion.git
+cd stable-diffusion
+python -m venv .venv --prompt sd
+. .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
+python scripts/gradio_superres.py
+```
+
+Note since I trained this model there is now an 'official' super res model for Stable Diffusion 2 which you might prefer to use.
 
 ## Fine tuning
 

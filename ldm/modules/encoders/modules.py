@@ -21,6 +21,72 @@ class IdentityEncoder(AbstractEncoder):
     def encode(self, x):
         return x
 
+class FaceClipEncoder(AbstractEncoder):
+    def __init__(self, augment=True, retreival_key=None):
+        super().__init__()
+        self.encoder = FrozenCLIPImageEmbedder()
+        self.augment = augment
+        self.retreival_key = retreival_key
+
+    def forward(self, img):
+        encodings = []
+        with torch.no_grad():
+            x_offset = 125
+            if self.retreival_key:
+                # Assumes retrieved image are packed into the second half of channels
+                face = img[:,3:,190:440,x_offset:(512-x_offset)]
+                other = img[:,:3,...].clone()
+            else:
+                face = img[:,:,190:440,x_offset:(512-x_offset)]
+                other = img.clone()
+
+            if self.augment:
+                face = K.RandomHorizontalFlip()(face)
+
+            other[:,:,190:440,x_offset:(512-x_offset)] *= 0
+            encodings = [
+                self.encoder.encode(face),
+                self.encoder.encode(other),
+            ]
+
+        return torch.cat(encodings, dim=1)
+
+    def encode(self, img):
+        if isinstance(img, list):
+            # Uncondition
+            return torch.zeros((1, 2, 768), device=self.encoder.model.visual.conv1.weight.device)
+
+        return self(img)
+
+class FaceIdClipEncoder(AbstractEncoder):
+    def __init__(self):
+        super().__init__()
+        self.encoder = FrozenCLIPImageEmbedder()
+        for p in self.encoder.parameters():
+            p.requires_grad = False
+        self.id = FrozenFaceEncoder("/home/jpinkney/code/stable-diffusion/model_ir_se50.pth", augment=True)
+
+    def forward(self, img):
+        encodings = []
+        with torch.no_grad():
+            face = kornia.geometry.resize(img, (256, 256),
+                            interpolation='bilinear', align_corners=True)
+
+            other = img.clone()
+            other[:,:,184:452,122:396] *= 0
+            encodings = [
+                self.id.encode(face),
+                self.encoder.encode(other),
+            ]
+
+        return torch.cat(encodings, dim=1)
+
+    def encode(self, img):
+        if isinstance(img, list):
+            # Uncondition
+            return torch.zeros((1, 2, 768), device=self.encoder.model.visual.conv1.weight.device)
+
+        return self(img)
 
 class ClassEmbedder(nn.Module):
     def __init__(self, embed_dim, n_classes=1000, key='class'):
@@ -160,10 +226,10 @@ class FrozenFaceEncoder(AbstractEncoder):
             self.augment = K.AugmentationSequential(
                 K.RandomHorizontalFlip(p=0.5),
                 K.RandomEqualize(p=p),
-                K.RandomPlanckianJitter(p=p),
-                K.RandomPlasmaBrightness(p=p),
-                K.RandomPlasmaContrast(p=p),
-                K.ColorJiggle(0.02, 0.2, 0.2, p=p),
+                # K.RandomPlanckianJitter(p=p),
+                # K.RandomPlasmaBrightness(p=p),
+                # K.RandomPlasmaContrast(p=p),
+                # K.ColorJiggle(0.02, 0.2, 0.2, p=p),
             )
         else:
             self.augment = False
@@ -314,6 +380,65 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
 
     def encode(self, im):
         return self(im).unsqueeze(1)
+
+from torchvision import transforms
+import random
+
+class FrozenCLIPImageMutliEmbedder(AbstractEncoder):
+    """
+        Uses the CLIP image encoder.
+        Not actually frozen... If you want that set cond_stage_trainable=False in cfg
+        """
+    def __init__(
+            self,
+            model='ViT-L/14',
+            jit=False,
+            device='cpu',
+            antialias=True,
+            max_crops=5,
+        ):
+        super().__init__()
+        self.model, _ = clip.load(name=model, device=device, jit=jit)
+        # We don't use the text part so delete it
+        del self.model.transformer
+        self.antialias = antialias
+        self.register_buffer('mean', torch.Tensor([0.48145466, 0.4578275, 0.40821073]), persistent=False)
+        self.register_buffer('std', torch.Tensor([0.26862954, 0.26130258, 0.27577711]), persistent=False)
+        self.max_crops = max_crops
+
+    def preprocess(self, x):
+
+        # Expects inputs in the range -1, 1
+        randcrop = transforms.RandomResizedCrop(224, scale=(0.085, 1.0), ratio=(1,1))
+        max_crops = self.max_crops
+        patches = []
+        crops = [randcrop(x) for _ in range(max_crops)]
+        patches.extend(crops)
+        x = torch.cat(patches, dim=0)
+        x = (x + 1.) / 2.
+        # renormalize according to clip
+        x = kornia.enhance.normalize(x, self.mean, self.std)
+        return x
+
+    def forward(self, x):
+        # x is assumed to be in range [-1,1]
+        if isinstance(x, list):
+            # [""] denotes condition dropout for ucg
+            device = self.model.visual.conv1.weight.device
+            return torch.zeros(1, self.max_crops, 768, device=device)
+        batch_tokens = []
+        for im in x:
+            patches = self.preprocess(im.unsqueeze(0))
+            tokens = self.model.encode_image(patches).float()
+            for t in tokens:
+                if random.random() < 0.1:
+                    t *= 0
+            batch_tokens.append(tokens.unsqueeze(0))
+
+        return torch.cat(batch_tokens, dim=0)
+
+    def encode(self, im):
+        return self(im)
 
 class SpatialRescaler(nn.Module):
     def __init__(self,

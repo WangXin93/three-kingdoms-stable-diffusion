@@ -1403,6 +1403,9 @@ class LatentDiffusion(DDPM):
             for n, m in self.model.named_modules():
                 if isinstance(m, CrossAttention) and n.endswith('attn2'):
                     params.extend(m.parameters())
+        if self.unet_trainable == "conv_in":
+            print("Training only unet input conv layers")
+            params = list(self.model.diffusion_model.input_blocks[0][0].parameters())
         elif self.unet_trainable is True or self.unet_trainable == "all":
             print("Training the full unet")
             params = list(self.model.parameters())
@@ -1894,6 +1897,101 @@ class SimpleUpscaleDiffusion(LatentDiffusion):
                                                  )
                 x_samples_cfg = self.decode_first_stage(samples_cfg)
                 log[f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"] = x_samples_cfg
+        return log
 
+class MultiCatFrameDiffusion(LatentDiffusion):
+    def __init__(self, *args, low_scale_key="LR", **kwargs):
+        super().__init__(*args, **kwargs)
+        # assumes that neither the cond_stage nor the low_scale_model contain trainable params
+        assert not self.cond_stage_trainable
+        self.low_scale_key = low_scale_key
 
+    @torch.no_grad()
+    def get_input(self, batch, k, cond_key=None, bs=None, log_mode=False):
+        n = 2
+        if not log_mode:
+            z, c = super().get_input(batch, k, force_c_encode=True, bs=bs)
+        else:
+            z, c, x, xrec, xc = super().get_input(batch, self.first_stage_key, return_first_stage_outputs=True,
+                                                  force_c_encode=True, return_original_cond=True, bs=bs)
+        cat_conds = batch[self.low_scale_key][:bs]
+        cats = []
+        for i in range(n):
+            x_low = cat_conds[:,:,:,3*i:3*(i+1)]
+            x_low = rearrange(x_low, 'b h w c -> b c h w')
+            x_low = x_low.to(memory_format=torch.contiguous_format).float()
+            encoder_posterior = self.encode_first_stage(x_low)
+            zx = self.get_first_stage_encoding(encoder_posterior).detach()
+            cats.append(zx)
+
+        all_conds = {"c_concat": [torch.cat(cats, dim=1)], "c_crossattn": [c]}
+
+        if log_mode:
+            # TODO: maybe disable if too expensive
+            interpretability = False
+            if interpretability:
+                zx = zx[:, :, ::2, ::2]
+            return z, all_conds, x, xrec, xc, x_low
+        return z, all_conds
+
+    @torch.no_grad()
+    def log_images(self, batch, N=8, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
+                   plot_denoise_rows=False, plot_progressive_rows=True, plot_diffusion_rows=True,
+                   unconditional_guidance_scale=1., unconditional_guidance_label=None, use_ema_scope=True,
+                   **kwargs):
+        ema_scope = self.ema_scope if use_ema_scope else nullcontext
+        use_ddim = ddim_steps is not None
+
+        log = dict()
+        z, c, x, xrec, xc, x_low = self.get_input(batch, self.first_stage_key, bs=N, log_mode=True)
+        N = min(x.shape[0], N)
+        n_row = min(x.shape[0], n_row)
+        log["inputs"] = x
+        log["reconstruction"] = xrec
+        log["x_lr"] = x_low
+
+        if self.model.conditioning_key is not None:
+            if hasattr(self.cond_stage_model, "decode"):
+                xc = self.cond_stage_model.decode(c)
+                log["conditioning"] = xc
+            elif self.cond_stage_key in ["caption", "txt"]:
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch[self.cond_stage_key], size=x.shape[2]//25)
+                log["conditioning"] = xc
+            elif self.cond_stage_key == 'class_label':
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"], size=x.shape[2]//25)
+                log['conditioning'] = xc
+            elif isimage(xc):
+                log["conditioning"] = xc
+            if ismap(xc):
+                log["original_conditioning"] = self.to_rgb(xc)
+
+        if sample:
+            # get denoise row
+            with ema_scope("Sampling"):
+                samples, z_denoise_row = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+                                                         ddim_steps=ddim_steps, eta=ddim_eta)
+                # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True)
+            x_samples = self.decode_first_stage(samples)
+            log["samples"] = x_samples
+
+        if unconditional_guidance_scale > 1.0:
+            uc_tmp = self.get_unconditional_conditioning(N, unconditional_guidance_label)
+            uc = dict()
+            for k in c:
+                if k == "c_crossattn":
+                    assert isinstance(c[k], list) and len(c[k]) == 1
+                    uc[k] = [uc_tmp]
+                elif isinstance(c[k], list):
+                    uc[k] = [c[k][i] for i in range(len(c[k]))]
+                else:
+                    uc[k] = c[k]
+
+            with ema_scope("Sampling with classifier-free guidance"):
+                samples_cfg, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+                                                 ddim_steps=ddim_steps, eta=ddim_eta,
+                                                 unconditional_guidance_scale=unconditional_guidance_scale,
+                                                 unconditional_conditioning=uc,
+                                                 )
+                x_samples_cfg = self.decode_first_stage(samples_cfg)
+                log[f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"] = x_samples_cfg
         return log

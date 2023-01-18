@@ -27,10 +27,12 @@ MULTINODE_HACKS = False
 def rank_zero_print(*args):
     print(*args)
 
-def modify_weights(w, scale = 1e-6):
+def modify_weights(w, scale = 1e-6, n=2):
     """Modify weights to accomodate concatenation to unet"""
     extra_w = scale*torch.randn_like(w)
-    new_w = torch.cat((w, extra_w), dim=1)
+    new_w = w.clone()
+    for i in range(n):
+        new_w = torch.cat((new_w, extra_w.clone()), dim=1)
     return new_w
 
 
@@ -373,7 +375,7 @@ class ImageLogger(Callback):
             should_log = True
         else:
             should_log = self.check_frequency(check_idx)
-        if (should_log and  (batch_idx % self.batch_freq == 0) and
+        if (should_log and  (check_idx % self.batch_freq == 0) and
                 hasattr(pl_module, "log_images") and
                 callable(pl_module.log_images) and
                 self.max_images > 0):
@@ -681,7 +683,8 @@ if __name__ == "__main__":
             in_filters_load = old_state["model.diffusion_model.input_blocks.0.0.weight"]
             new_state = model.state_dict()
             in_filters_current = new_state["model.diffusion_model.input_blocks.0.0.weight"]
-            if in_filters_current.shape != in_filters_load.shape:
+            in_shape = in_filters_current.shape
+            if in_shape != in_filters_load.shape:
                 rank_zero_print("Modifying weights to double number of input channels")
                 keys_to_change = [
                     "model.diffusion_model.input_blocks.0.0.weight",
@@ -689,7 +692,8 @@ if __name__ == "__main__":
                 ]
                 scale = 1e-8
                 for k in keys_to_change:
-                    old_state[k] = modify_weights(old_state[k], scale=scale)
+                    print("modifying input weights for compatibitlity")
+                    old_state[k] = modify_weights(old_state[k], scale=scale, n=in_shape//4 - 1)
 
             m, u = model.load_state_dict(old_state, strict=False)
             if len(m) > 0:
