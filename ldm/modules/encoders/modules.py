@@ -381,6 +381,65 @@ class FrozenCLIPImageEmbedder(AbstractEncoder):
     def encode(self, im):
         return self(im).unsqueeze(1)
 
+from torchvision import transforms
+import random
+
+class FrozenCLIPImageMutliEmbedder(AbstractEncoder):
+    """
+        Uses the CLIP image encoder.
+        Not actually frozen... If you want that set cond_stage_trainable=False in cfg
+        """
+    def __init__(
+            self,
+            model='ViT-L/14',
+            jit=False,
+            device='cpu',
+            antialias=True,
+            max_crops=5,
+        ):
+        super().__init__()
+        self.model, _ = clip.load(name=model, device=device, jit=jit)
+        # We don't use the text part so delete it
+        del self.model.transformer
+        self.antialias = antialias
+        self.register_buffer('mean', torch.Tensor([0.48145466, 0.4578275, 0.40821073]), persistent=False)
+        self.register_buffer('std', torch.Tensor([0.26862954, 0.26130258, 0.27577711]), persistent=False)
+        self.max_crops = max_crops
+
+    def preprocess(self, x):
+
+        # Expects inputs in the range -1, 1
+        randcrop = transforms.RandomResizedCrop(224, scale=(0.085, 1.0), ratio=(1,1))
+        max_crops = self.max_crops
+        patches = []
+        crops = [randcrop(x) for _ in range(max_crops)]
+        patches.extend(crops)
+        x = torch.cat(patches, dim=0)
+        x = (x + 1.) / 2.
+        # renormalize according to clip
+        x = kornia.enhance.normalize(x, self.mean, self.std)
+        return x
+
+    def forward(self, x):
+        # x is assumed to be in range [-1,1]
+        if isinstance(x, list):
+            # [""] denotes condition dropout for ucg
+            device = self.model.visual.conv1.weight.device
+            return torch.zeros(1, self.max_crops, 768, device=device)
+        batch_tokens = []
+        for im in x:
+            patches = self.preprocess(im.unsqueeze(0))
+            tokens = self.model.encode_image(patches).float()
+            for t in tokens:
+                if random.random() < 0.1:
+                    t *= 0
+            batch_tokens.append(tokens.unsqueeze(0))
+
+        return torch.cat(batch_tokens, dim=0)
+
+    def encode(self, im):
+        return self(im)
+
 class SpatialRescaler(nn.Module):
     def __init__(self,
                  n_stages=1,
