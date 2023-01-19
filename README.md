@@ -13,7 +13,24 @@ Currently it adds:
 
 ## Image Mixer
 
-Multi CLIP image embedding model coming soon...
+![banner-large.jpeg](https://s3.amazonaws.com/moonup/production/uploads/1674039767068-62bd5f951e22ec84279820e8.jpeg)
+
+The model is available on [huggingface spaces](https://huggingface.co/spaces/lambdalabs/image-mixer-demo) or to run locally do the following:
+
+```bash
+git clone https://github.com/justinpinkney/stable-diffusion.git
+cd stable-diffusion
+git checkout 1c8a598f312e54f614d1b9675db0e66382f7e23c
+python -m venv .venv --prompt sd
+. .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
+python scripts/gradio_image_mixer.py
+```
+
+Then navigate to the gradio demo link printed in the terminal.
+
+For details on how to use the model outside the app refer to the [`run` function](https://github.com/justinpinkney/stable-diffusion/blob/c1963a36a4f8ce23784c8247fa1af0e34e02b766/scripts/gradio_image_mixer.py#L79) in `gradio_image_mixer.py`
 
 ## Super Resolution
 
