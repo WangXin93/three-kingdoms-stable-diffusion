@@ -62,4 +62,4 @@ Trained on [BLIP captioned Three Kingdoms Officers images](https://huggingface.c
 - [Original model weights](https://huggingface.co/wx44wx/three-kingdoms-stable-diffusion)
 - [Training code](https://github.com/justinpinkney/stable-diffusion)
 
-Trained by [Xin Wang](wangxin93.github.io). Thanks [kongming.net](kongming.net) for their archived images and [justinpinkney](https://github.com/justinpinkney/stable-diffusion) for the code.
+Trained by [Xin Wang](wangxin93.github.io). Thanks [kongming.net](kongming.net) for their archived images and [justinpinkney](https://github.com/LambdaLabsML/examples/tree/main/stable-diffusion-finetuning) for the code.
