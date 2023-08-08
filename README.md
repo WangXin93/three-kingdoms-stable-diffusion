@@ -1,10 +1,17 @@
-__Stable Diffusion fine tuned on Romance of the Three Kingdoms XI: Officer Portraits (https://kongming.net/11/portraits/).__
+__Stable Diffusion fine tuned on [Romance of the Three Kingdoms XI: Officer Portraits](https://kongming.net/11/portraits/).__
 
 Put in a text prompt and generate your own Officier in Three Kingdoms.
 
 trained using this [script](https://github.com/LambdaLabsML/examples/tree/main/stable-diffusion-finetuning) with this [dataset](https://huggingface.co/datasets/wx44wx/three-kingdoms-blip-captions).
 
+> a man in armor
 ![image.png](assets/a-man-in-armor.png)
+
+> a women in red dress
+![image.png](assets/a-women-in-red-dress.png)
+
+> a women in armor
+![image.png](assets/a-women-in-armor.png)
 
 try in [colab](https://colab.research.google.com/drive/1Wu_V-beDvLltrP4t6QURbb_8UDYYcUSC).
 
@@ -55,4 +62,4 @@ Trained on [BLIP captioned Three Kingdoms Officers images](https://huggingface.c
 - [Original model weights](https://huggingface.co/wx44wx/three-kingdoms-stable-diffusion)
 - [Training code](https://github.com/justinpinkney/stable-diffusion)
 
-Trained by [Xin Wang](wangxin93.github.io).
+Trained by [Xin Wang](wangxin93.github.io). Thanks [kongming.net](kongming.net) for their archived images and [justinpinkney](https://github.com/justinpinkney/stable-diffusion) for the code.
